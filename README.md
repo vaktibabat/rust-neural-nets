@@ -1,7 +1,5 @@
-# rust-mnist
-Making a Neural Net for Digit Recognition from scratch in Rust for a blogpost.
-The training hyperparameters can be adjusted. 
-Example usage:
-`./rust_neuralnet --train-path path_to_train_set --validation-path path_to_validation_set -n 784, 128, 10` (n specifies the network architecture)
+# Neural Networks in Rust
+Repository for experimenting with Neural-Net related things. For example various architectures, regularization methods, etc.
+Some of the things will be covered with a blogpost and some are just general improvements (e.g. dropout does not need an entire blogpost)
 
-Compile with `cargo build --release`
+Yoray :)
