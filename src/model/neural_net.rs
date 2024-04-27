@@ -10,6 +10,16 @@ pub struct NeuralNet {
     pub num_epochs: usize,                       // Training hyperparams
     pub batch_size: usize,
     pub learning_rate: f64,
+    pub activation_function: ActivationFunction,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum ActivationFunction {
+    ReLU,
+    Sigmoid,
+    Tanh,
+    Linear,
+    LeakyReLU,
 }
 
 impl NeuralNet {
@@ -19,6 +29,7 @@ impl NeuralNet {
         num_epochs: usize,
         batch_size: usize,
         learning_rate: f64,
+        activation_function: ActivationFunction
     ) -> NeuralNet {
         let mut layers = vec![];
         let mut rng = rand::thread_rng();
@@ -40,6 +51,7 @@ impl NeuralNet {
             num_epochs,
             batch_size,
             learning_rate,
+            activation_function,
         }
     }
 
@@ -61,7 +73,7 @@ impl NeuralNet {
             // The real output of the layer - If the layer is a hidden layer, we apply the activation function
             // and otherwise (this is the output layer) the output is the same as the linear output
             let real_output = lin_output.map(|x| match it.peek() {
-                Some(_) => relu(*x),
+                Some(_) => activation(&self.activation_function, *x),
                 None => *x,
             });
 
@@ -85,7 +97,7 @@ impl NeuralNet {
         for idx in (0..self.layers.len()).rev() {
             // If we aren't at the last layer, we need to change the gradient
             if idx != self.layers.len() - 1 {
-                let step_mat = hidden_linear[idx].map(|x| step(*x));
+                let step_mat = hidden_linear[idx].map(|x| delta_activation(&self.activation_function, *x));
                 grad_help = grad_help * step_mat;
             }
 
@@ -160,9 +172,24 @@ impl Model for NeuralNet {
     }
 }
 
-/// Activation function
-fn relu(z: f64) -> f64 {
-    z.max(0f64)
+fn activation(name: &ActivationFunction, z: f64) -> f64 {
+    match name {
+        ActivationFunction::ReLU => z.max(0f64),
+        ActivationFunction::Sigmoid => (1f64 + (-z).exp()).recip(),
+        ActivationFunction::Tanh => (z.exp() - (-z).exp()) / (z.exp() + (-z).exp()),
+        ActivationFunction::Linear => 3f64*z + 1f64,
+        ActivationFunction::LeakyReLU => z.max(0.01 * z),
+    }
+}
+
+fn delta_activation(name: &ActivationFunction, z: f64) -> f64 {
+    match name {
+        ActivationFunction::ReLU => if z > 0f64 {1f64} else {0f64},
+        ActivationFunction::Sigmoid => activation(name, z) * (1f64 - activation(name, z)),
+        ActivationFunction::Tanh => 1f64 - activation(name, z) * activation(name, z),
+        ActivationFunction::Linear => 3f64,
+        ActivationFunction::LeakyReLU => if z > 0f64 {1f64} else {0.01f64},
+    }
 }
 
 /// Softmax function - Convert scores into a probability distribution
@@ -176,15 +203,6 @@ fn softmax(scores: ArrayView1<f64>) -> Array1<f64> {
     (0..scores.len())
         .map(|x| shift_scores[x].exp() / sum)
         .collect()
-}
-
-/// Derivative of ReLU
-fn step(z: f64) -> f64 {
-    if z >= 0f64 {
-        1f64
-    } else {
-        0f64
-    }
 }
 
 /// Calculate the cross-entropy loss on a given batch
