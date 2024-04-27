@@ -2,6 +2,7 @@ pub mod model;
 pub mod parsing;
 
 use clap::Parser;
+use model::neural_net::ActivationFunction;
 use model::{neural_net, Model};
 use ndarray::Axis;
 use parsing::mnist;
@@ -38,6 +39,10 @@ struct Args {
     /// Debug mode (save loss in a "time     loss" format)
     #[arg(short, long, default_value = None)]
     debug_path: Option<String>,
+
+    #[arg(short, long, default_value = None)]
+    activation_function: ActivationFunction,
+
 }
 
 /// Test the model on the validation set
@@ -92,6 +97,7 @@ fn main() {
         args.num_epochs,
         args.batch_size,
         args.learning_rate,
+        args.activation_function
     );
 
     let losses = neural_net.fit(&dataset, Some(&args.validation_path));
