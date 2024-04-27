@@ -94,7 +94,7 @@ fn main() {
         args.learning_rate,
     );
 
-    let losses = neural_net.fit(&dataset);
+    let losses = neural_net.fit(&dataset, Some(&args.validation_path));
 
     if let Some(debug_path) = args.debug_path {
         let _ = write_losses(&debug_path, losses);

@@ -1,4 +1,4 @@
-use crate::parsing::Dataset;
+use crate::parsing::{mnist::parse_dataset, Dataset};
 use ndarray::{Array, Array1, Array2, ArrayView1, ArrayView2, Axis};
 use rand::distributions::{Distribution, Uniform};
 
@@ -109,12 +109,11 @@ impl NeuralNet {
 impl Model for NeuralNet {
     /// Fit the model to the dataset
     /// Return the model loss as a function of time (used for plotting)
-    fn fit(&mut self, dataset: &Dataset) -> Vec<(usize, f64)> {
+    fn fit(&mut self, dataset: &Dataset, test_path: Option<&str>) -> Vec<(usize, f64)> {
         // Used for writing the debug output
-        let mut batch_cnt: usize = 0;
         let mut losses = vec![];
 
-        for _ in 0..self.num_epochs {
+        for num_epoch in 0..self.num_epochs {
             // Get a batch of instances and their targets
             for (input_batch, target_batch) in dataset
                 .data
@@ -131,17 +130,15 @@ impl Model for NeuralNet {
                     predictions.push_row(softmax(row).view()).unwrap();
                 }
 
-                // Push to the losses vector if we're in debug mode
-
-                let loss = cross_entropy(&predictions, target_batch);
-                losses.push((batch_cnt, loss));
-
-                batch_cnt += 1;
-
                 // Gradient is initialized to the gradient of the loss WRT the output layer
                 let grad = predictions - target_batch;
 
                 self.backward_and_update(hidden, hidden_linear, grad);
+            }
+
+            if let Some(path) = test_path {
+                let loss = test_loss(&self, path);
+                losses.push((num_epoch, loss));
             }
         }
 
@@ -199,4 +196,13 @@ fn cross_entropy(actual: &Array2<f64>, target: ArrayView2<f64>) -> f64 {
         .sum();
 
     -1f64 * (1f64 / actual.nrows() as f64) * total
+}
+
+fn test_loss(model: &NeuralNet, test_path: &str) -> f64 {
+    let test_dataset = parse_dataset(test_path);
+    let actual = model.predict(&test_dataset.data.view());
+    
+    let target = test_dataset.target;
+
+    cross_entropy(&actual, target.view())
 }
