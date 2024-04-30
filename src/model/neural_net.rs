@@ -193,8 +193,6 @@ impl NeuralNet {
             let loss = test_loss(self, test_path);
             losses.push((num_epoch, loss));
 
-            println!("loss={}", loss);
-
             prev_loss = curr_loss;
             curr_loss = loss;
             num_epoch += 1;
@@ -215,8 +213,6 @@ impl Model for NeuralNet {
         if let Some(num_epochs) = self.num_epochs {
             self.fit_net_static(dataset, test_path, num_epochs)
         } else {
-            println!("Entered early stopping");
-            
             self.fit_net_dynamic(
                 dataset,
                 test_path,
