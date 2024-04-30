@@ -7,10 +7,12 @@ use super::Model;
 /// Represents a neural net
 pub struct NeuralNet {
     pub layers: Vec<(Array2<f64>, Array1<f64>)>, // Each layer holds a weight matrix and a bias vector
-    pub num_epochs: usize,                       // Training hyperparams
-    pub batch_size: usize,
+    pub num_epochs: Option<usize>, // If num_epochs is Some(number), we train the network for number epochs
+    // Otherwise, if it is None, early stopping is used
+    pub batch_size: usize, // Training hyperparams
     pub learning_rate: f64,
     pub activation_function: ActivationFunction,
+    pub epsilon: f64, // Tolerance for early stopping.
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -28,19 +30,20 @@ pub enum InitMethod {
     Xavier,
 }
 
-impl NeuralNet {    
+impl NeuralNet {
     /// Construct a new neural net according to the specified hyperparams
     pub fn new(
         layer_structure: Vec<usize>,
-        num_epochs: usize,
+        num_epochs: Option<usize>,
         batch_size: usize,
         learning_rate: f64,
         activation_function: ActivationFunction,
         init_method: InitMethod,
+        epsilon: f64,
     ) -> NeuralNet {
         let layers = match init_method {
             InitMethod::Default => init_layers_default(&layer_structure),
-            InitMethod::Xavier => init_layers_xavier(&layer_structure)
+            InitMethod::Xavier => init_layers_xavier(&layer_structure),
         };
 
         NeuralNet {
@@ -49,6 +52,7 @@ impl NeuralNet {
             batch_size,
             learning_rate,
             activation_function,
+            epsilon,
         }
     }
 
@@ -94,7 +98,8 @@ impl NeuralNet {
         for idx in (0..self.layers.len()).rev() {
             // If we aren't at the last layer, we need to change the gradient
             if idx != self.layers.len() - 1 {
-                let step_mat = hidden_linear[idx].map(|x| delta_activation(&self.activation_function, *x));
+                let step_mat =
+                    hidden_linear[idx].map(|x| delta_activation(&self.activation_function, *x));
                 grad_help = grad_help * step_mat;
             }
 
@@ -113,16 +118,16 @@ impl NeuralNet {
             self.layers[idx] = (new_weights, new_biases);
         }
     }
-}
 
-impl Model for NeuralNet {
-    /// Fit the model to the dataset
-    /// Return the model loss as a function of time (used for plotting)
-    fn fit(&mut self, dataset: &Dataset, test_path: Option<&str>) -> Vec<(usize, f64)> {
-        // Used for writing the debug output
+    fn fit_net_static(
+        &mut self,
+        dataset: &Dataset,
+        test_path: &str,
+        num_epochs: usize,
+    ) -> Vec<(usize, f64)> {
         let mut losses = vec![];
 
-        for num_epoch in 0..self.num_epochs {
+        for num_epoch in 0..num_epochs {
             // Get a batch of instances and their targets
             for (input_batch, target_batch) in dataset
                 .data
@@ -145,14 +150,79 @@ impl Model for NeuralNet {
                 self.backward_and_update(hidden, hidden_linear, grad);
             }
 
-            if let Some(path) = test_path {
-                let loss = test_loss(&self, path);
-
+                let loss = test_loss(self, test_path);
                 losses.push((num_epoch, loss));
+        }
+
+        losses
+    }
+
+    fn fit_net_dynamic(
+        &mut self,
+        dataset: &Dataset,
+        test_path: &str,
+        tolerance: f64,
+    ) -> Vec<(usize, f64)> {
+        let mut prev_loss;
+        let mut curr_loss = f64::INFINITY;
+        let mut losses = vec![];
+        let mut num_epoch = 0;
+
+        loop {
+            for (input_batch, target_batch) in dataset
+                .data
+                .axis_chunks_iter(Axis(0), self.batch_size)
+                .zip(dataset.target.axis_chunks_iter(Axis(0), self.batch_size))
+            {
+                let (hidden, hidden_linear) = self.forward(&input_batch);
+
+                let scores = hidden.last().unwrap();
+                let mut predictions = Array::zeros((0, scores.ncols()));
+
+                // Construct softmax matrix
+                for row in scores.axis_iter(Axis(0)) {
+                    predictions.push_row(softmax(row).view()).unwrap();
+                }
+
+                // Gradient is initialized to the gradient of the loss WRT the output layer
+                let grad = predictions - target_batch;
+
+                self.backward_and_update(hidden, hidden_linear, grad);
+            }
+
+            let loss = test_loss(self, test_path);
+            losses.push((num_epoch, loss));
+
+            println!("loss={}", loss);
+
+            prev_loss = curr_loss;
+            curr_loss = loss;
+            num_epoch += 1;
+
+            if curr_loss - prev_loss >= tolerance {
+                break;
             }
         }
 
         losses
+    }
+}
+
+impl Model for NeuralNet {
+    /// Fit the model to the dataset
+    /// Return the model loss as a function of time (used for plotting)
+    fn fit(&mut self, dataset: &Dataset, test_path: &str) -> Vec<(usize, f64)> {
+        if let Some(num_epochs) = self.num_epochs {
+            self.fit_net_static(dataset, test_path, num_epochs)
+        } else {
+            println!("Entered early stopping");
+            
+            self.fit_net_dynamic(
+                dataset,
+                test_path,
+                self.epsilon
+            )
+        }
     }
 
     /// Predict the probabities for a set of instances - each instance is a row in "inputs"
@@ -175,22 +245,34 @@ fn activation(name: &ActivationFunction, z: f64) -> f64 {
         ActivationFunction::ReLU => z.max(0f64),
         ActivationFunction::Sigmoid => (1f64 + (-z).exp()).recip(),
         ActivationFunction::Tanh => (z.exp() - (-z).exp()) / (z.exp() + (-z).exp()),
-        ActivationFunction::Linear => 3f64*z + 1f64,
+        ActivationFunction::Linear => 3f64 * z + 1f64,
         ActivationFunction::LeakyReLU => z.max(0.01 * z),
     }
 }
 
 fn delta_activation(name: &ActivationFunction, z: f64) -> f64 {
     match name {
-        ActivationFunction::ReLU => if z > 0f64 {1f64} else {0f64},
+        ActivationFunction::ReLU => {
+            if z > 0f64 {
+                1f64
+            } else {
+                0f64
+            }
+        }
         ActivationFunction::Sigmoid => activation(name, z) * (1f64 - activation(name, z)),
         ActivationFunction::Tanh => 1f64 - activation(name, z) * activation(name, z),
         ActivationFunction::Linear => 3f64,
-        ActivationFunction::LeakyReLU => if z > 0f64 {1f64} else {0.01f64},
+        ActivationFunction::LeakyReLU => {
+            if z > 0f64 {
+                1f64
+            } else {
+                0.01f64
+            }
+        }
     }
 }
 
-fn init_layers_default(layer_structure: &Vec<usize>) -> Vec<(Array2<f64>, Array1<f64>)> {
+fn init_layers_default(layer_structure: &[usize]) -> Vec<(Array2<f64>, Array1<f64>)> {
     let mut layers = vec![];
     let mut rng = rand::thread_rng();
     // Weights are initialized from a uniform distribiution
@@ -209,20 +291,19 @@ fn init_layers_default(layer_structure: &Vec<usize>) -> Vec<(Array2<f64>, Array1
     layers
 }
 
-fn init_layers_xavier(layer_structure: &Vec<usize>) -> Vec<(Array2<f64>, Array1<f64>)> {
+fn init_layers_xavier(layer_structure: &[usize]) -> Vec<(Array2<f64>, Array1<f64>)> {
     let mut layers = vec![];
     let mut rng = rand::thread_rng();
 
-    for i in  0..layer_structure.len() - 1 {
+    for i in 0..layer_structure.len() - 1 {
         let boundary = 6f64.sqrt() / (layer_structure[i] + layer_structure[i + 1]) as f64;
         let dist = Uniform::new(-boundary, boundary);
-        
+
         let weights = Array::zeros((layer_structure[i], layer_structure[i + 1]))
-        .map(|_: &f64| dist.sample(&mut rng));
+            .map(|_: &f64| dist.sample(&mut rng));
         let bias = Array::zeros(layer_structure[i + 1]);
 
         layers.push((weights, bias));
-
     }
 
     layers
@@ -255,7 +336,7 @@ fn cross_entropy(predictions: &Array2<f64>, target: ArrayView2<f64>) -> f64 {
 fn test_loss(model: &NeuralNet, test_path: &str) -> f64 {
     let test_dataset = parse_dataset(test_path);
     let predictions = model.predict(&test_dataset.data.view());
-    
+
     let target = test_dataset.target;
 
     cross_entropy(&predictions, target.view())

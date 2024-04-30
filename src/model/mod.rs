@@ -5,6 +5,6 @@ use crate::parsing::Dataset;
 pub mod neural_net;
 
 pub trait Model {
-    fn fit(&mut self, dataset: &Dataset, test_path: Option<&str>) -> Vec<(usize, f64)>;
+    fn fit(&mut self, dataset: &Dataset, test_path: &str) -> Vec<(usize, f64)>;
     fn predict(&self, instance: &ArrayView2<f64>) -> Array2<f64>;
 }

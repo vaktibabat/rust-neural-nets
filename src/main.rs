@@ -33,18 +33,26 @@ struct Args {
     batch_size: usize,
 
     /// Number of epochs to train the network for
-    #[arg(short, long, default_value_t = 11)]
-    num_epochs: usize,
+    /// If this parameter is not provided, early stopping is used instead
+    /// And you also need to specify a tolerance
+    #[arg(short, long, default_value = None)]
+    num_epochs: Option<usize>,
 
     /// Debug mode (save loss in a "time     loss" format)
     #[arg(short, long, default_value = None)]
     debug_path: Option<String>,
 
+    /// Activation function used by the network
     #[arg(short, long, default_value = None)]
     activation_function: ActivationFunction,
 
+    /// Weight initialization method
     #[arg(short, long, default_value = None)]
     initialization: InitMethod,
+
+    /// Tolerance for early stopping
+    #[arg(short, long, default_value_t = 0.0001)]
+    epsilon: f64,
 }
 
 /// Test the model on the validation set
@@ -101,9 +109,10 @@ fn main() {
         args.learning_rate,
         args.activation_function,
         args.initialization,
+        args.epsilon,
     );
 
-    let losses = neural_net.fit(&dataset, Some(&args.validation_path));
+    let losses = neural_net.fit(&dataset, &args.validation_path);
 
     if let Some(debug_path) = args.debug_path {
         let _ = write_losses(&debug_path, losses);
