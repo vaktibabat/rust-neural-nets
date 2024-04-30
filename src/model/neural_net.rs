@@ -22,29 +22,26 @@ pub enum ActivationFunction {
     LeakyReLU,
 }
 
-impl NeuralNet {
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum InitMethod {
+    Default,
+    Xavier,
+}
+
+impl NeuralNet {    
     /// Construct a new neural net according to the specified hyperparams
     pub fn new(
         layer_structure: Vec<usize>,
         num_epochs: usize,
         batch_size: usize,
         learning_rate: f64,
-        activation_function: ActivationFunction
+        activation_function: ActivationFunction,
+        init_method: InitMethod,
     ) -> NeuralNet {
-        let mut layers = vec![];
-        let mut rng = rand::thread_rng();
-        // Weights are initialized from a uniform distribiution
-        let distribution = Uniform::new(-0.3, 0.3);
-
-        for i in 0..layer_structure.len() - 1 {
-            // Random matrix of the weights between this layer and the next layer
-            let weights = Array::zeros((layer_structure[i], layer_structure[i + 1]))
-                .map(|_: &f64| distribution.sample(&mut rng));
-            // Bias vector between this layer and the next layer. Init'd to ondes
-            let bias = Array::ones(layer_structure[i + 1]);
-
-            layers.push((weights, bias));
-        }
+        let layers = match init_method {
+            InitMethod::Default => init_layers_default(&layer_structure),
+            InitMethod::Xavier => init_layers_xavier(&layer_structure)
+        };
 
         NeuralNet {
             layers,
@@ -150,6 +147,7 @@ impl Model for NeuralNet {
 
             if let Some(path) = test_path {
                 let loss = test_loss(&self, path);
+
                 losses.push((num_epoch, loss));
             }
         }
@@ -192,6 +190,44 @@ fn delta_activation(name: &ActivationFunction, z: f64) -> f64 {
     }
 }
 
+fn init_layers_default(layer_structure: &Vec<usize>) -> Vec<(Array2<f64>, Array1<f64>)> {
+    let mut layers = vec![];
+    let mut rng = rand::thread_rng();
+    // Weights are initialized from a uniform distribiution
+    let distribution = Uniform::new(-0.3, 0.3);
+
+    for i in 0..layer_structure.len() - 1 {
+        // Random matrix of the weights between this layer and the next layer
+        let weights = Array::zeros((layer_structure[i], layer_structure[i + 1]))
+            .map(|_: &f64| distribution.sample(&mut rng));
+        // Bias vector between this layer and the next layer. Init'd to ondes
+        let bias = Array::ones(layer_structure[i + 1]);
+
+        layers.push((weights, bias));
+    }
+
+    layers
+}
+
+fn init_layers_xavier(layer_structure: &Vec<usize>) -> Vec<(Array2<f64>, Array1<f64>)> {
+    let mut layers = vec![];
+    let mut rng = rand::thread_rng();
+
+    for i in  0..layer_structure.len() - 1 {
+        let boundary = 6f64.sqrt() / (layer_structure[i] + layer_structure[i + 1]) as f64;
+        let dist = Uniform::new(-boundary, boundary);
+        
+        let weights = Array::zeros((layer_structure[i], layer_structure[i + 1]))
+        .map(|_: &f64| dist.sample(&mut rng));
+        let bias = Array::zeros(layer_structure[i + 1]);
+
+        layers.push((weights, bias));
+
+    }
+
+    layers
+}
+
 /// Softmax function - Convert scores into a probability distribution
 fn softmax(scores: ArrayView1<f64>) -> Array1<f64> {
     let max = scores.iter().max_by(|x, y| x.total_cmp(y)).unwrap();
@@ -206,21 +242,21 @@ fn softmax(scores: ArrayView1<f64>) -> Array1<f64> {
 }
 
 /// Calculate the cross-entropy loss on a given batch
-fn cross_entropy(actual: &Array2<f64>, target: ArrayView2<f64>) -> f64 {
-    let total: f64 = actual
+fn cross_entropy(predictions: &Array2<f64>, target: ArrayView2<f64>) -> f64 {
+    let total: f64 = predictions
         .axis_iter(Axis(0))
         .zip(target.axis_iter(Axis(0)))
         .map(|(actual_row, target_row)| target_row.dot(&actual_row.map(|x| x.log2())))
         .sum();
 
-    -1f64 * (1f64 / actual.nrows() as f64) * total
+    -1f64 * (1f64 / predictions.nrows() as f64) * total
 }
 
 fn test_loss(model: &NeuralNet, test_path: &str) -> f64 {
     let test_dataset = parse_dataset(test_path);
-    let actual = model.predict(&test_dataset.data.view());
+    let predictions = model.predict(&test_dataset.data.view());
     
     let target = test_dataset.target;
 
-    cross_entropy(&actual, target.view())
+    cross_entropy(&predictions, target.view())
 }
